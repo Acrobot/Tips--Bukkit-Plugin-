@@ -18,316 +18,157 @@
 
 package com.keithlawless.plugins.SimpleTips;
 
+import com.keithlawless.plugins.SimpleTips.MessageRunners.GroupMessageRunner;
+import com.keithlawless.plugins.SimpleTips.MessageRunners.MessageRunner;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
-import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitScheduler;
-import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.configuration.ConfigurationSection;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
+import java.util.Random;
 import java.util.logging.Logger;
 
-public class SimpleTips extends JavaPlugin implements Runnable {
-    private static int MSG_ORDER_SEQ = 0;
-    private static int MSG_ORDER_RANDOM = 1;
+public class SimpleTips extends JavaPlugin {
+    public static Logger log;
+    public static Random random = new Random();
 
-    private static String version = "SimpleTips v1.1 by keithlawless";
-    Logger log = Logger.getLogger("Minecraft");
-
-
-    // Delay is measured in server ticks, which is 1/20th of a second.
-    private Integer firstMsgDelay = 0;
-    private Integer nextMsgDelay = 0;
-    private boolean groupMsgEnabled = false;
-    private List<String> msgs;
-    private HashMap<String,List<String>> groupMsgs;
-    private HashMap<String,Integer> groupMsgsCount;
-    private int msgCount = 0;
-    private int currentMsg = 0;
-    private Random random = new Random();
-    private File file;
-    private YamlConfiguration config;
-    private int msgOrder = MSG_ORDER_SEQ;
-
-    public void onDisable() {
-        log.info(version+" has been disabled.");
-    }
+    int scheduledTaskID;
 
     public void onEnable() {
-        load();
-        log.info(version+" has been enabled.");
-        BukkitScheduler scheduler = this.getServer().getScheduler();
-        int result = scheduler.scheduleAsyncRepeatingTask( this, this, firstMsgDelay, nextMsgDelay );
-        if( -1 == result ) {
-            log.info(version+" Error! Failed to schedule tip display.");
-        }
-        else {
-            log.info(version+" Success! SimpleTips will be displayed on your schedule.");
-        }
-    }
+        log = getLogger();
 
-    public void load() {
-        // YAML configuration file.
-        File mainDirectory = new File("plugins"+File.separator+"SimpleTips");
-        file = new File(mainDirectory.getAbsolutePath()+File.separator+"config.yml");
+        Configuration.load(this);
 
-        if(!file.exists()) {
-            try {
-                Vector<String> msgs = new Vector<String>();
-                msgs.add("Put your messages here!");
+        Runnable runnable = (Configuration.groupMsgEnabled ? new GroupMessageRunner() : new MessageRunner());
+        scheduledTaskID = Bukkit.getScheduler().scheduleAsyncRepeatingTask(this, runnable, Configuration.firstMsgDelay, Configuration.nextMsgDelay);
 
-                mainDirectory.mkdirs();
-                file.createNewFile();
-                config = new YamlConfiguration();
-                config.set("firstMsgDelay", (30 * 20));
-                config.set("nextMsgDelay", (30 * 20));
-                config.set("msgOrder", "Sequential");
-                config.set("msgList", msgs);
-                config.set("groupMsgEnabled", false);
-                config.save(file);
-            }
-            catch(Exception e) {
-                e.printStackTrace();
-            }
-        }
-        else {
-            try {
-                config = YamlConfiguration.loadConfiguration(file);
-                firstMsgDelay = config.getInt("firstMsgDelay", 0);
-                nextMsgDelay = config.getInt("nextMsgDelay", 0);
-                if((config.getString("msgOrder") != null ) && (config.getString("msgOrder").equalsIgnoreCase("Random"))) {
-                    msgOrder = MSG_ORDER_RANDOM;
-                }
-                else {
-                    msgOrder = MSG_ORDER_SEQ;
-                }
-
-                groupMsgEnabled = config.getBoolean( "groupMsgEnabled", false );
-
-                msgs = config.getStringList("msgList");
-                if(msgs != null) {
-                    msgCount = msgs.size();
-                }
-                else {
-                    msgCount = 0;
-                    msgs = new Vector<String>();
-                }
-
-                if(groupMsgEnabled) {
-                    groupMsgs = new HashMap<String,List<String>>();
-
-                    ConfigurationSection section = config.getConfigurationSection("groupMsgList");
-                    Set<String> keys = section.getKeys(false);
-                    if( keys != null ) {
-                        for ( String groupName : keys) {
-                            groupMsgs.put(groupName.toLowerCase(), section.getStringList(groupName));
-                            int count = section.getStringList(groupName).size();
-                            groupMsgsCount.put(groupName.toLowerCase(), new Integer(count));
-                        }
-                    }
-                }
-            }
-            catch(Exception e) {
-                e.printStackTrace();
-            }
+        if (scheduledTaskID < 0) {
+            log.severe("Error! Failed to schedule tip display.");
+        } else {
+            log.info("Success! SimpleTips will be displayed on your schedule.");
         }
     }
 
-    public void run() {
-        if(groupMsgEnabled) {
-            groupMessageDisplay();
-        }
-        else {
-            simpleMessageDisplay();
-        }
-    }
-
-    private void simpleMessageDisplay() {
-        if( msgCount > 0 ) {
-            String msg = ( msgOrder == MSG_ORDER_RANDOM ? msgs.get( random.nextInt( msgCount )) : msgs.get(currentMsg));
-            this.getServer().broadcastMessage(escape_colors( msg ));
-            currentMsg++;
-            if( currentMsg >= msgCount ) {
-                currentMsg = 0;
-            }
-        }
-    }
-
-    private void groupMessageDisplay() {
-        Player[] players = this.getServer().getOnlinePlayers();
-        for( Player player : players ) {
-            this.getServer().getLogger().warning("Showing messages to " + player.getName());
-            Set<String> groups = groupMsgs.keySet();
-            for( String group : groups ) {
-                String permissionNode = "tip.show."+group;
-                if( player.hasPermission(permissionNode)) {
-                    List<String> msgList = groupMsgs.get(group.toLowerCase());
-                    if( msgList != null ) {
-                        int c = msgList.size();
-                        if( c > 0 ) {
-                            String msg = msgList.get( random.nextInt( c ));
-                            player.sendMessage(escape_colors(msg));
-                        }
-                    }
-                }
-            }
-        }
+    public void onDisable() {
+        Bukkit.getScheduler().cancelTask(scheduledTaskID);
     }
 
     public boolean onCommand(CommandSender sender, Command command, String commandLabel, String[] args) {
-        if(!(sender instanceof Player)) {
+        if (!command.getName().equalsIgnoreCase("tip")) {
             return false;
         }
 
-        Player player = (Player)sender;
-
-        if(command.getName().equalsIgnoreCase("tip")) {
-
-            // player entered just /tip by itself - return a random tip
-            if( args.length == 0 ) {
-                if (msgCount > 0) {
-                    int x = random.nextInt(msgCount);
-                    player.sendMessage(escape_colors(msgs.get(x)));
-                } else {
-                    player.sendMessage("No tips have been defined.");
-                }
+        if (args.length < 1) {
+            if (Configuration.msgList.size() < 1) {
+                sender.sendMessage("No tips have been defined.");
                 return true;
             }
 
-            if( args.length == 1 ) {
-                // player entered /tip list
-                if( args[0].equalsIgnoreCase("list")) {
+            int randomInt = random.nextInt(Configuration.msgList.size());
+            String message = Configuration.msgList.get(randomInt);
 
-                    if (( !player.hasPermission("tip.list")) && (!sender.isOp())) {
-                        player.sendMessage( "(SimpleTips) You don't have permission to run that command.");
-                    }
-                    else {
-                        for( int x = 0; x < msgCount; x++ ) {
-                            player.sendMessage( "(" + x + ") " + escape_colors(msgs.get(x)));
-                        }
-                    }
+            sender.sendMessage(Configuration.colorize(message));
+            return true;
+        }
 
+        if (args.length == 1 && args[0].equalsIgnoreCase("list")) {
+            if (!sender.hasPermission("tip.list")) {
+                sender.sendMessage("(SimpleTips) You don't have permission to run that command.");
+                return true;
+            }
+
+            for (int i = 0; i < Configuration.msgList.size(); ++i) {
+                sender.sendMessage("(" + i + ") " + Configuration.colorize(Configuration.msgList.get(i)));
+            }
+
+            return true;
+        }
+
+        if (args.length >= 2) {
+            if (args[0].equalsIgnoreCase("add")) {
+                if (!sender.hasPermission("tip.add")) {
+                    sender.sendMessage("(SimpleTips) You don't have permission to run that command.");
+                    return true;
+                }
+
+                String message = joinArray(args, 1);
+
+                Configuration.msgList.add(message);
+
+                getConfig().set("msgList", Configuration.msgList);
+                saveConfig();
+
+                sender.sendMessage("(SimpleTips) Tip has been added.");
+
+                return true;
+            } else if (args[0].equalsIgnoreCase("del")) {
+                if (!sender.hasPermission("tip.del")) {
+                    sender.sendMessage("(SimpleTips) You don't have permission to run that command.");
+                    return true;
+                }
+
+                try {
+                    int messageNo = Integer.parseInt(args[1]);
+                    Configuration.msgList.remove(messageNo);
+
+                    getConfig().set("msgList", Configuration.msgList);
+                    saveConfig();
+
+                    sender.sendMessage("(SimpleTips) Tip has been deleted.");
+
+                    return true;
+                } catch (NumberFormatException ex) {
+                    return false;
+                } catch (IndexOutOfBoundsException ex) {
+                    sender.sendMessage("(SimpleTips) Tip was not found.");
+                    return true;
+                }
+            } else if (args[0].equalsIgnoreCase("replace")) {
+                if (!sender.hasPermission("tip.replace")) {
+                    sender.sendMessage("(SimpleTips) You don't have permission to run that command.");
+                    return true;
+                }
+
+                if (args.length < 3) {
+                    return false;
+                }
+
+                try {
+                    int messageNo = Integer.parseInt(args[1]);
+                    String message = joinArray(args, 2);
+
+                    Configuration.msgList.set(messageNo, message);
+
+                    getConfig().set("msgList", Configuration.msgList);
+                    saveConfig();
+
+                    sender.sendMessage("(SimpleTips) Tip has been replaced.");
+                    return true;
+                } catch (NumberFormatException nfe) {
+                    sender.sendMessage("(SimpleTips) This is not a valid tip number.");
+                    return true;
+                } catch (IndexOutOfBoundsException e) {
+                    sender.sendMessage("(SimpleTips) Tip was not found.");
                     return true;
                 }
             }
 
-            if( args.length >= 2  ) {
-                // player entered /tip add [text]
-                if( args[0].equalsIgnoreCase("add")) {
-
-                    if (( !player.hasPermission("tip.add")) && (!sender.isOp())) {
-                            player.sendMessage( "(SimpleTips) You don't have permission to run that command.");
-                    }
-                    else {
-                        StringBuffer sb = new StringBuffer();
-                        for( int x = 1; x < args.length; x++ ) {
-                            if( x > 1 ) {
-                                sb.append(" ");
-                            }
-                            sb.append( args[x] );
-                        }
-                        msgs.add(new String(sb));
-                        config.set("msgList", msgs);
-                        try {
-                            config.save(file);
-                            msgCount++;
-                            player.sendMessage("(SimpleTips) Tip has been added.");
-                        }
-                        catch( IOException e ) {
-                            player.sendMessage("(SimpleTips) Error while saving configuration.");
-                        }
-                    }
-                    return true;
-                }
-
-                //player entered /tip del [num]
-                if( args[0].equalsIgnoreCase("del")) {
-                    if (( !player.hasPermission("tip.del")) && (!sender.isOp())) {
-                            player.sendMessage( "(SimpleTips) You don't have permission to run that command.");
-                    }
-                    else {
-                        try {
-                            int i = Integer.parseInt(args[1]);
-                            msgs.remove(i);
-                            config.set("msgList", msgs);
-                            try {
-                                config.save(file);
-                                msgCount--;
-                                currentMsg = 0; // Reset current message counter on each delete
-                                player.sendMessage("(SimpleTips) Tip has been deleted.");
-                            }
-                            catch( IOException e ) {
-                                player.sendMessage("(SimpleTips) Error while saving configuration.");
-                            }
-                        }
-                        catch(NumberFormatException nfe) {
-                            return false;
-                        }
-                        catch(IndexOutOfBoundsException e) {
-                            player.sendMessage("(SimpleTips) Tip was not found.");
-                            return true;
-                        }
-                    }
-                    return true;
-                }
-
-                if( args[0].equalsIgnoreCase("replace")) {
-                    if (( !player.hasPermission("tip.replace")) && (!sender.isOp())) {
-                            player.sendMessage( "(SimpleTips) You don't have permission to run that command.");
-                    }
-                    else {
-                        if( args.length < 3 ) {
-                            return false;
-                        }
-                        Integer msgIndex = 0;
-                        try {
-                            msgIndex = Integer.parseInt(args[1]);
-                            StringBuffer sb = new StringBuffer();
-                            for( int x = 2; x < args.length; x++ ) {
-                                if( x > 2 ) {
-                                    sb.append(" ");
-                                }
-                                sb.append( args[x] );
-                            }
-                            msgs.set(msgIndex, new String(sb));
-                            config.set("msgList", msgs);
-                            try {
-                                config.save(file);
-                                player.sendMessage("(SimpleTips) Tip has been replaced.");
-                            }
-                            catch( IOException e ) {
-                                player.sendMessage("(SimpleTips) Error while saving configuration.");
-                            }
-                        }
-                        catch(NumberFormatException nfe) {
-                            return false;
-                        }
-                        catch(IndexOutOfBoundsException e) {
-                            player.sendMessage("(SimpleTips) Tip was not found.");
-                            return true;
-                        }
-                    }
-                    return true;
-                }
-            }
         }
 
         return false;
     }
 
-    private String escape_colors(String input) {
-        char[] color_codes = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    private static String joinArray(String[] array, int start) {
+        StringBuilder message = new StringBuilder(array.length * 10);
 
-        String output = new String(input);
-        for( int x = 0; x < color_codes.length; x++ ) {
-            output = output.replace( "%"+color_codes[x], "\u00A7"+color_codes[x]);
+        for (int i = start; i < array.length; ++i) {
+            if (i != start) {
+                message.append(' ');
+            }
+
+            message.append(array[i]);
         }
 
-        return output;
+        return message.toString();
     }
 }
